@@ -1,6 +1,10 @@
 import os
 from sentence_transformers import SentenceTransformer
 import endee
+from endee.schema import VectorItem
+# Monkeypatch official Endee SDK bug where it expects a dict instead of a Pydantic model internally
+if not hasattr(VectorItem, 'get'):
+    VectorItem.get = lambda self, key, default=None: getattr(self, key, default)
 
 # 1. Initialize the SentenceTransformer model
 # We use a small, fast model that produces 384-dimensional vectors
@@ -56,37 +60,41 @@ def main():
         })
 
     # Connect to Endee
-    try:
-        client = create_endee_client()
-        index = setup_index(client, index_name="semantic_search_index", dimension=384)
-        
-        print(f"Upserting {len(vector_items)} documents into Endee...")
-        index.upsert(vector_items)
-        print("Documents successfully indexed!")
-        
-        # Now let's perform a Semantic Search
-        query_text = "What is a vector database used for?"
-        print(f"\nPerforming search for query: '{query_text}'")
-        query_embedding = model.encode(query_text).tolist()
-        
-        results = index.query(vector=query_embedding, top_k=2)
-        
-        print("\n--- Search Results ---")
-        for res in results:
-            print(f"ID: {res.id}, Similarity: {res.similarity:.4f}")
-            # Depending on how the Python SDK returns meta, it might be an attribute or dict
-            meta = getattr(res, 'meta', {}) or {}
-            print(f"Text: {meta.get('text', 'No text available')}\n")
+    client = create_endee_client()
+    index = setup_index(client, index_name="semantic_search_index", dimension=384)
+    
+    print(f"Upserting {len(vector_items)} documents into Endee...")
+    index.upsert(vector_items)
+    print("Documents successfully indexed!")
+    
+    # Now let's perform a Semantic Search
+    query_text = "What is a vector database used for?"
+    print(f"\nPerforming search for query: '{query_text}'")
+    query_embedding = model.encode(query_text).tolist()
+    
+    results = index.query(vector=query_embedding, top_k=2)
+    
+    print("\n--- Search Results ---")
+    for res in results:
+        if isinstance(res, dict):
+            res_id = res.get('id')
+            res_sim = res.get('similarity', 0.0)
+            meta = res.get('meta', {})
+        else:
+            res_id = getattr(res, 'id', 'Unknown')
+            res_sim = getattr(res, 'similarity', 0.0)
+            meta = getattr(res, 'meta', {})
             
-    except Exception as e:
-        print(f"\n[ERROR] Ensure Endee is running on localhost:8080 using Docker!")
-        print(f"Exceptiondetails: {str(e)}")
-
-def test_imports():
-    """Simple test to verify imports work."""
-    assert model is not None, "Failed to load model"
-    assert endee is not None, "Failed to import Endee"
-    print("Test passed: Imports and model loaded successfully.")
+        print(f"ID: {res_id}, Similarity: {res_sim:.4f}")
+        
+        if isinstance(meta, dict):
+            text = meta.get('text', 'No text available')
+        elif meta is not None:
+            text = getattr(meta, 'text', str(meta))
+        else:
+            text = 'No text available'
+            
+        print(f"Text: {text}\n")
 
 if __name__ == "__main__":
     main()
